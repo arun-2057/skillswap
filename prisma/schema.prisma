@@ -1,0 +1,162 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String    @id @default(cuid())
+  name           String?
+  email          String    @unique
+  passwordHash   String
+  bio            String?
+  avatar         String?
+  timezone       String    @default("UTC")
+  creditBalance  Int       @default(100)
+  skillsOffered  String    @default("[]")
+  skillsWanted   String    @default("[]")
+  averageRating  Float     @default(0)
+  isOnboarded    Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  listings          SkillListing[]
+  teacherSessions   Session[] @relation("TeacherSessions")
+  learnerSessions   Session[] @relation("LearnerSessions")
+  sentTransactions  Transaction[] @relation("SentTransactions")
+  receivedTransactions Transaction[] @relation("ReceivedTransactions")
+  sentReviews       Review[] @relation("SentReviews")
+  receivedReviews   Review[] @relation("ReceivedReviews")
+  notifications     Notification[]
+
+  @@index([email])
+  @@index([averageRating])
+}
+
+model SkillListing {
+  id           String   @id @default(cuid())
+  userId       String
+  title        String
+  category     String
+  tags         String   @default("[]")
+  description  String
+  creditCost   Int
+  availability String   @default("WEEKDAYS")
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions Session[]
+
+  @@index([userId])
+  @@index([category])
+  @@index([isActive])
+  @@index([createdAt])
+  @@index([creditCost])
+}
+
+model Session {
+  id               String           @id @default(cuid())
+  learnerId        String
+  teacherId        String
+  listingId        String
+  status           SessionStatus    @default(PENDING)
+  scheduledAt      DateTime
+  durationMinutes  Int              @default(60)
+  videoLink        String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  learner    User         @relation("LearnerSessions", fields: [learnerId], references: [id])
+  teacher    User         @relation("TeacherSessions", fields: [teacherId], references: [id])
+  listing    SkillListing @relation(fields: [listingId], references: [id])
+  transactions Transaction[]
+  reviews       Review[]
+
+  @@index([learnerId])
+  @@index([teacherId])
+  @@index([listingId])
+  @@index([status])
+  @@index([scheduledAt])
+}
+
+model Transaction {
+  id         String           @id @default(cuid())
+  fromUserId String
+  toUserId   String
+  amount     Int
+  type       TransactionType
+  sessionId  String?
+  createdAt  DateTime         @default(now())
+
+  fromUser User       @relation("SentTransactions", fields: [fromUserId], references: [id])
+  toUser   User       @relation("ReceivedTransactions", fields: [toUserId], references: [id])
+  session  Session?   @relation(fields: [sessionId], references: [id])
+
+  @@index([fromUserId])
+  @@index([toUserId])
+  @@index([sessionId])
+  @@index([createdAt])
+}
+
+model Review {
+  id         String   @id @default(cuid())
+  reviewerId String
+  revieweeId String
+  sessionId  String
+  rating     Int
+  comment    String?
+  isFlagged  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  reviewer User         @relation("SentReviews", fields: [reviewerId], references: [id])
+  reviewee User         @relation("ReceivedReviews", fields: [revieweeId], references: [id])
+  session  Session      @relation(fields: [sessionId], references: [id])
+
+  @@unique([reviewerId, sessionId])
+  @@index([revieweeId])
+  @@index([sessionId])
+  @@index([rating])
+}
+
+model Notification {
+  id        String              @id @default(cuid())
+  userId    String
+  type      NotificationType
+  message   String
+  metadata  String              @default("{}")
+  isRead    Boolean             @default(false)
+  createdAt DateTime            @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+  @@index([createdAt])
+}
+
+enum SessionStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+}
+
+enum TransactionType {
+  EARN
+  SPEND
+  REFUND
+}
+
+enum NotificationType {
+  SESSION_REQUEST
+  SESSION_CONFIRMED
+  SESSION_CANCELLED
+  REVIEW_RECEIVED
+  CREDIT_RECEIVED
+  LOW_BALANCE
+}
