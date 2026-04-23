@@ -79,9 +79,12 @@ export async function GET(request: NextRequest) {
       };
     }
 
-    // Cursor-based pagination
+    // Cursor-based pagination (using createdAt as a date filter)
     const listings = await db.skillListing.findMany({
-      where,
+      where: {
+        ...where,
+        ...(cursor && { createdAt: { lt: new Date(cursor) } }),
+      },
       include: {
         user: {
           select: {
@@ -94,10 +97,6 @@ export async function GET(request: NextRequest) {
       },
       orderBy,
       take: limit + 1,
-      ...(cursor && {
-        cursor: { createdAt: new Date(cursor) },
-        skip: 1,
-      }),
     });
 
     const hasMore = listings.length > limit;

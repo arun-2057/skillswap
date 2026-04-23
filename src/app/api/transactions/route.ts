@@ -31,7 +31,10 @@ export async function GET(request: NextRequest) {
     };
 
     const transactions = await db.transaction.findMany({
-      where,
+      where: {
+        ...where,
+        ...(cursor && { createdAt: { lt: new Date(cursor) } }),
+      },
       include: {
         fromUser: {
           select: { id: true, name: true, avatar: true },
@@ -42,10 +45,6 @@ export async function GET(request: NextRequest) {
       },
       orderBy: { createdAt: "desc" },
       take: limit + 1,
-      ...(cursor && {
-        cursor: { createdAt: new Date(cursor) },
-        skip: 1,
-      }),
     });
 
     const hasMore = transactions.length > limit;

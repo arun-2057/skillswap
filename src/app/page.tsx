@@ -5,17 +5,17 @@ import { useRouterStore } from '@/store/router-store';
 import { useAuthStore } from '@/store/auth-store';
 import { Navbar } from '@/components/layout/navbar';
 import { Footer } from '@/components/layout/footer';
-import { AuthPage } from '@/pages/auth-page';
-import { OnboardingPage } from '@/pages/onboarding-page';
-import { HomePage } from '@/pages/home-page';
-import { BrowsePage } from '@/pages/browse-page';
-import { ListingDetailPage } from '@/pages/listing-detail-page';
-import { CreateListingPage } from '@/pages/create-listing-page';
-import { ProfilePage } from '@/pages/profile-page';
-import { SessionsPage } from '@/pages/sessions-page';
-import { SessionDetailPage } from '@/pages/session-detail-page';
-import { TransactionsPage } from '@/pages/transactions-page';
-import { NotificationsPage } from '@/pages/notifications-page';
+import { AuthPage } from '@/views/auth-page';
+import { OnboardingPage } from '@/views/onboarding-page';
+import { HomePage } from '@/views/home-page';
+import { BrowsePage } from '@/views/browse-page';
+import { ListingDetailPage } from '@/views/listing-detail-page';
+import { CreateListingPage } from '@/views/create-listing-page';
+import { ProfilePage } from '@/views/profile-page';
+import { SessionsPage } from '@/views/sessions-page';
+import { SessionDetailPage } from '@/views/session-detail-page';
+import { TransactionsPage } from '@/views/transactions-page';
+import { NotificationsPage } from '@/views/notifications-page';
 
 export default function AppEntry() {
   const { route } = useRouterStore();

@@ -41,7 +41,10 @@ export async function GET(request: NextRequest) {
     };
 
     const sessions = await db.session.findMany({
-      where,
+      where: {
+        ...where,
+        ...(cursor && { createdAt: { lt: new Date(cursor) } }),
+      },
       include: {
         listing: {
           select: {
@@ -60,10 +63,6 @@ export async function GET(request: NextRequest) {
       },
       orderBy: { createdAt: "desc" },
       take: limit + 1,
-      ...(cursor && {
-        cursor: { createdAt: new Date(cursor) },
-        skip: 1,
-      }),
     });
 
     const hasMore = sessions.length > limit;

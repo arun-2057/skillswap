@@ -36,7 +36,10 @@ export async function GET(
 
     // Parse reviews with pagination
     const reviews = await db.review.findMany({
-      where: { revieweeId: id },
+      where: {
+        revieweeId: id,
+        ...(cursor && { createdAt: { lt: new Date(cursor) } }),
+      },
       include: {
         reviewer: {
           select: { id: true, name: true, avatar: true },
@@ -44,10 +47,6 @@ export async function GET(
       },
       orderBy: { createdAt: "desc" },
       take: limit + 1,
-      ...(cursor && {
-        cursor: { createdAt: new Date(cursor) },
-        skip: 1,
-      }),
     });
 
     const hasMore = reviews.length > limit;

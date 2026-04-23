@@ -25,13 +25,12 @@ export async function GET(request: NextRequest) {
     const { cursor, limit } = queryParams.data;
 
     const notifications = await db.notification.findMany({
-      where: { userId: user.id },
+      where: {
+        userId: user.id,
+        ...(cursor && { createdAt: { lt: new Date(cursor) } }),
+      },
       orderBy: { createdAt: "desc" },
       take: limit + 1,
-      ...(cursor && {
-        cursor: { createdAt: new Date(cursor) },
-        skip: 1,
-      }),
     });
 
     const hasMore = notifications.length > limit;

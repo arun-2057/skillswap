@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { signIn } from 'next-auth/react';
-import { useRouterStore } from '@/store/router-store';
+import { useRouterStore, type AppRoute } from '@/store/router-store';
 import { useAuthStore } from '@/store/auth-store';
 import { loginSchema, registerSchema } from '@/lib/validators';
 import { toast } from 'sonner';
@@ -60,20 +60,8 @@ export function AuthPage() {
   );
 }
 
-type NavigateFn = (route: { page: string; id?: string; editId?: string; params?: Record<string, string> }) => void;
-type SetUserFn = (user: {
-  id: string;
-  email: string;
-  name: string | null;
-  bio: string | null;
-  avatar: string | null;
-  timezone: string;
-  creditBalance: number;
-  skillsOffered: string[];
-  skillsWanted: string[];
-  averageRating: number;
-  isOnboarded: boolean;
-} | null) => void;
+type NavigateFn = (route: AppRoute) => void;
+type SetUserFn = Parameters<typeof useAuthStore.getState>['setUser'] extends (u: infer U) => void ? (u: U) => void : never;
 
 function SignInForm({
   onNavigate,
