@@ -1,11 +1,10 @@
 'use client';
 
-import { useRouterStore } from '@/store/router-store';
-import { Coins } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { Separator } from '@/components/ui/separator';
 
 export function Footer() {
-  const { navigate } = useRouterStore();
+  const router = useRouter();
   const currentYear = new Date().getFullYear();
 
   return (
@@ -14,11 +13,11 @@ export function Footer() {
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex flex-col items-center sm:items-start gap-1">
             <button
-              onClick={() => navigate({ page: 'home' })}
-              className="flex items-center gap-2 font-bold text-lg hover:opacity-80 transition-opacity"
+              onClick={() => router.push('/')}
+              className="flex items-center rounded-full px-2 py-1 transition-opacity hover:opacity-80"
+              aria-label="SkillSwap home"
             >
-              <Coins className="size-4" />
-              SkillSwap
+              <img src="/logo.svg" alt="SkillSwap" className="h-6 w-auto" />
             </button>
             <p className="text-sm text-muted-foreground">
               Trade skills, not money.
@@ -27,14 +26,14 @@ export function Footer() {
 
           <nav className="flex items-center gap-4 text-sm text-muted-foreground">
             <button
-              onClick={() => navigate({ page: 'browse' })}
+              onClick={() => router.push('/browse')}
               className="hover:text-foreground transition-colors"
             >
               Browse Skills
             </button>
             <Separator orientation="vertical" className="h-4" />
             <button
-              onClick={() => navigate({ page: 'home' })}
+              onClick={() => router.push('/')}
               className="hover:text-foreground transition-colors"
             >
               About

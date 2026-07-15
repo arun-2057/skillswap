@@ -1,12 +1,20 @@
-'use client';
+'use client'
 
-import { SessionProvider } from 'next-auth/react';
-import type { ReactNode } from 'react';
+import type { ReactNode } from 'react'
+import { AuthProvider } from './auth-provider'
+import { Toaster } from '@/components/ui/toaster'
 
-interface SessionProviderWrapperProps {
-  children: ReactNode;
+interface SessionProviderProps {
+  children: ReactNode
 }
 
-export function SessionProviderWrapper({ children }: SessionProviderWrapperProps) {
-  return <SessionProvider>{children}</SessionProvider>;
+export function SessionProvider({ children }: SessionProviderProps) {
+  return (
+    <>
+      <AuthProvider>
+        {children}
+      </AuthProvider>
+      <Toaster />
+    </>
+  )
 }

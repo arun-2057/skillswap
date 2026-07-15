@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { useRouterStore } from '@/store/router-store';
+import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/store/auth-store';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -12,7 +12,6 @@ import {
   Check,
   XCircle,
   Star,
-  Coins,
   AlertTriangle,
   CheckCheck,
   Loader2,
@@ -21,8 +20,9 @@ import {
 interface NotificationData {
   id: string;
   type: string;
+  title: string;
   message: string;
-  metadata: string;
+  metadata?: Record<string, any>;
   isRead: boolean;
   createdAt: string;
 }
@@ -32,7 +32,6 @@ const NOTIFICATION_ICONS: Record<string, typeof Bell> = {
   SESSION_CONFIRMED: Check,
   SESSION_CANCELLED: XCircle,
   REVIEW_RECEIVED: Star,
-  CREDIT_RECEIVED: Coins,
   LOW_BALANCE: AlertTriangle,
 };
 
@@ -59,57 +58,70 @@ function getNotificationAction(type: string): { page: string; id?: string } | nu
       return { page: 'sessions' };
     case 'REVIEW_RECEIVED':
       return { page: 'profile' };
-    case 'CREDIT_RECEIVED':
-      return { page: 'transactions' };
-    case 'LOW_BALANCE':
-      return { page: 'browse' };
     default:
       return null;
   }
 }
 
-function getTargetId(metadata: string): string | undefined {
-  try {
-    const parsed = JSON.parse(metadata);
-    return parsed.sessionId || parsed.userId || parsed.id;
-  } catch {
-    return undefined;
+function getTargetId(metadata: Record<string, any> | string | undefined): string | undefined {
+  if (!metadata) return undefined;
+  
+  // Handle string (legacy JSON format)
+  let parsed: Record<string, any>;
+  if (typeof metadata === 'string') {
+    try {
+      parsed = JSON.parse(metadata);
+    } catch {
+      return undefined;
+    }
+  } else {
+    parsed = metadata;
   }
+  
+  return parsed.sessionId || parsed.userId || parsed.id || parsed.relatedId;
 }
 
 export function NotificationsPage() {
-  const { navigate } = useRouterStore();
+  const router = useRouter();
   const [notifications, setNotifications] = useState<NotificationData[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
-  const [nextCursor, setNextCursor] = useState<string | undefined>();
+  const [currentOffset, setCurrentOffset] = useState(0);
   const [markingAll, setMarkingAll] = useState(false);
 
-  const fetchNotifications = useCallback(async (cursor?: string) => {
-    const isLoadMore = !!cursor;
-    if (isLoadMore) {
+  const fetchNotifications = useCallback(async (loadMore = false) => {
+    if (loadMore) {
       setLoadingMore(true);
     } else {
       setLoading(true);
+      setCurrentOffset(0);
     }
 
     try {
       const params = new URLSearchParams();
-      params.set('limit', '20');
-      if (cursor) params.set('cursor', cursor);
+      const limit = 20;
+      
+      // Use ref or state to get the correct offset
+      const effectiveOffset = loadMore ? currentOffset : 0;
+      params.set('limit', String(limit));
+      params.set('offset', String(effectiveOffset));
 
       const res = await fetch(`/api/notifications?${params.toString()}`);
       if (res.ok) {
         const json = await res.json();
         if (json.success) {
-          if (isLoadMore) {
-            setNotifications((prev) => [...prev, ...json.data]);
+          const incoming = json.data;
+          if (loadMore) {
+            setNotifications((prev) => [...prev, ...incoming]);
+            setCurrentOffset((prev) => prev + incoming.length);
           } else {
-            setNotifications(json.data);
+            setNotifications(incoming);
           }
-          setHasMore(json.hasMore);
-          setNextCursor(json.nextCursor);
+          // Check if there are more notifications based on pagination
+          const total = json.pagination?.total ?? 0;
+          const receivedCount = loadMore ? effectiveOffset + incoming.length : incoming.length;
+          setHasMore(total > receivedCount);
         }
       }
     } catch {
@@ -118,11 +130,14 @@ export function NotificationsPage() {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, []);
+  }, [currentOffset]);
 
   useEffect(() => {
-    fetchNotifications();
+    // Avoid triggering setState directly in the effect body.
+    const initial = () => fetchNotifications();
+    initial();
   }, [fetchNotifications]);
+
 
   async function handleMarkAllRead() {
     setMarkingAll(true);
@@ -171,23 +186,20 @@ export function NotificationsPage() {
     switch (action.page) {
       case 'sessions':
         if (targetId) {
-          navigate({ page: 'session', id: targetId });
+          router.push(`/session/${targetId}`);
         } else {
-          navigate({ page: 'sessions' });
+          router.push('/sessions');
         }
         break;
       case 'profile':
         if (targetId) {
-          navigate({ page: 'profile', id: targetId });
+          router.push(`/profile/${targetId}`);
         } else {
-          navigate({ page: 'profile' });
+          router.push('/profile/me');
         }
         break;
-      case 'transactions':
-        navigate({ page: 'transactions' });
-        break;
       case 'browse':
-        navigate({ page: 'browse' });
+        router.push('/browse');
         break;
     }
   }
@@ -304,7 +316,7 @@ export function NotificationsPage() {
             <div className="flex justify-center mt-6">
               <Button
                 variant="outline"
-                onClick={() => fetchNotifications(nextCursor)}
+                onClick={() => fetchNotifications(true)}
                 disabled={loadingMore}
               >
                 {loadingMore && <Loader2 className="size-4 animate-spin" />}

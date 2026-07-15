@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouterStore } from '@/store/router-store';
+import { safeJsonArray } from '@/lib/safe-json';
+import { useRouter, useParams } from 'next/navigation';
 import { useAuthStore } from '@/store/auth-store';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -13,18 +14,8 @@ import {
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import {
   Select,
   SelectContent,
@@ -33,17 +24,20 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { StarRating } from '@/components/common/star-rating';
-import { CreditBadge } from '@/components/common/credit-badge';
+import { SkillLevelIndicator } from '@/components/common/skill-level-indicator';
 import {
   ArrowLeft,
-  Calendar,
-  Clock,
-  Coins,
   Edit,
   Power,
   PowerOff,
   Loader2,
+  Calendar,
 } from 'lucide-react';
+import {
+  getListingByIdAction,
+  toggleListingActiveAction,
+} from '@/app/actions/listings';
+import { BookSessionDialog } from '@/components/book-session-dialog';
 
 interface ListingData {
   id: string;
@@ -51,10 +45,15 @@ interface ListingData {
   category: string;
   description: string;
   tags: string;
-  creditCost: number;
   availability: string;
   isActive: boolean;
   createdAt: string;
+  difficultyLevel: 'beginner' | 'intermediate' | 'advanced' | 'expert';
+  estimatedDuration: number;
+  learningOutcomes: string; // stored as JSON string
+  prerequisites: string; // stored as JSON string
+  learningPath: string | null;
+  isMentorship: boolean;
   user: {
     id: string;
     name: string;
@@ -67,17 +66,14 @@ interface ListingData {
   };
 }
 
-export function ListingDetailPage() {
-  const { route, navigate, goBack } = useRouterStore();
+export function ListingDetailPage({ id }: { id?: string }) {
+  const router = useRouter();
+  const params = useParams();
   const { user, isAuthenticated } = useAuthStore();
-  const listingId = route.page === 'listing' ? route.id : '';
+  const listingId = id || (params?.id as string);
   const [listing, setListing] = useState<ListingData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [bookingOpen, setBookingOpen] = useState(false);
-  const [bookingDate, setBookingDate] = useState('');
-  const [bookingTime, setBookingTime] = useState('');
-  const [bookingDuration, setBookingDuration] = useState('60');
-  const [bookingLoading, setBookingLoading] = useState(false);
+  const [proposalOpen, setProposalOpen] = useState(false);
   const [toggling, setToggling] = useState(false);
 
   const isOwnListing = isAuthenticated && user?.id === listing?.user.id;
@@ -86,84 +82,33 @@ export function ListingDetailPage() {
     if (!listingId) return;
     async function fetchListing() {
       try {
-        const res = await fetch(`/api/listings/${listingId}`);
-        if (res.ok) {
-          const json = await res.json();
-          if (json.success && json.data) {
-            setListing(json.data);
-          } else {
-            toast.error('Listing not found');
-            goBack();
-          }
+        const data = await getListingByIdAction(listingId);
+        if (data) {
+          setListing(data as any);
         } else {
-          toast.error('Failed to load listing');
-          goBack();
+          toast.error('Listing not found');
+          router.push('/browse');
         }
       } catch {
-        toast.error('Something went wrong');
-        goBack();
+        toast.error('Failed to load listing');
+        router.push('/browse');
       } finally {
         setLoading(false);
       }
     }
     fetchListing();
-  }, [listingId, goBack]);
-
-  async function handleBookSession() {
-    if (!listing || !user) return;
-
-    if (!bookingDate || !bookingTime) {
-      toast.error('Please select a date and time');
-      return;
-    }
-
-    const scheduledAt = new Date(`${bookingDate}T${bookingTime}:00`).toISOString();
-
-    setBookingLoading(true);
-    try {
-      const res = await fetch('/api/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          listingId: listing.id,
-          scheduledAt,
-          durationMinutes: parseInt(bookingDuration),
-        }),
-      });
-
-      const json = await res.json();
-
-      if (!res.ok) {
-        toast.error(json.error?.message || 'Failed to book session');
-        return;
-      }
-
-      toast.success('Session request sent!');
-      setBookingOpen(false);
-      navigate({ page: 'sessions' });
-    } catch {
-      toast.error('Something went wrong');
-    } finally {
-      setBookingLoading(false);
-    }
-  }
+  }, [listingId, router]);
 
   async function handleToggleActive() {
     if (!listing) return;
     setToggling(true);
     try {
-      const res = await fetch(`/api/listings/${listing.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ isActive: !listing.isActive }),
-      });
-
-      const json = await res.json();
-      if (res.ok && json.success) {
+      const result = await toggleListingActiveAction(listing.id);
+      if (result.ok) {
         setListing({ ...listing, isActive: !listing.isActive });
         toast.success(listing.isActive ? 'Listing deactivated' : 'Listing activated');
       } else {
-        toast.error(json.error?.message || 'Failed to update listing');
+        toast.error(result.error || 'Failed to update listing');
       }
     } catch {
       toast.error('Something went wrong');
@@ -195,8 +140,8 @@ export function ListingDetailPage() {
 
   if (!listing) return null;
 
-  const tags: string[] = JSON.parse(listing.tags || '[]');
-  const teacherSkills: string[] = JSON.parse(listing.user.skillsOffered || '[]');
+  const tags = safeJsonArray(listing.tags);
+  const teacherSkills = safeJsonArray(listing.user.skillsOffered);
   const initials = listing.user.name
     ? listing.user.name
         .split(' ')
@@ -206,8 +151,6 @@ export function ListingDetailPage() {
         .slice(0, 2)
     : 'U';
 
-  const minDate = new Date().toISOString().split('T')[0];
-
   return (
     <div className="flex-1 mx-auto max-w-4xl px-4 sm:px-6 py-8">
       {/* Back button */}
@@ -215,7 +158,7 @@ export function ListingDetailPage() {
         variant="ghost"
         size="sm"
         className="mb-6 -ml-2"
-        onClick={goBack}
+        onClick={() => router.back()}
       >
         <ArrowLeft className="size-4 mr-1" />
         Back
@@ -244,7 +187,7 @@ export function ListingDetailPage() {
                     variant="outline"
                     size="sm"
                     onClick={() =>
-                      navigate({ page: 'create-listing', editId: listing.id })
+                      router.push(`/create-listing?editId=${listing.id}`)
                     }
                   >
                     <Edit className="size-4 mr-1" />
@@ -317,7 +260,7 @@ export function ListingDetailPage() {
                 <div>
                   <button
                     onClick={() =>
-                      navigate({ page: 'profile', id: listing.user.id })
+                      router.push(`/profile/${listing.user.id}`)
                     }
                     className="font-semibold hover:underline"
                   >
@@ -355,24 +298,26 @@ export function ListingDetailPage() {
             </CardContent>
           </Card>
 
-          {/* Booking card */}
+          {/* Proposal card */}
           {!isOwnListing && isAuthenticated && (
             <Card>
               <CardContent className="pt-6">
                 <div className="text-center mb-4">
-                  <p className="text-sm text-muted-foreground">Cost per session</p>
-                  <div className="flex items-center justify-center gap-1 mt-1">
-                    <CreditBadge amount={listing.creditCost} size="md" />
-                    <span className="text-sm text-muted-foreground">credits</span>
-                  </div>
+                  <p className="text-sm text-muted-foreground">Skill swap</p>
+                <div className="flex items-center justify-center gap-2 mt-1">
+                  <SkillLevelIndicator level={listing.difficultyLevel} size="sm" />
+                  <span className="text-sm text-muted-foreground">
+                    {listing.estimatedDuration} min
+                  </span>
+                </div>
                 </div>
                 <Button
                   className="w-full"
                   size="lg"
-                  onClick={() => setBookingOpen(true)}
+                  onClick={() => setProposalOpen(true)}
                   disabled={!listing.isActive}
                 >
-                  {!listing.isActive ? 'Listing Inactive' : 'Book Session'}
+                  {!listing.isActive ? 'Listing Inactive' : 'Propose Swap'}
                 </Button>
               </CardContent>
             </Card>
@@ -384,10 +329,10 @@ export function ListingDetailPage() {
                 <p className="text-sm text-muted-foreground mb-3">
                   Sign in to book this session
                 </p>
-                <Button
-                  className="w-full"
-                  onClick={() => navigate({ page: 'home' })}
-                >
+                  <Button
+                    className="w-full"
+                    onClick={() => router.push('/')}
+                  >
                   Sign In
                 </Button>
               </CardContent>
@@ -396,71 +341,15 @@ export function ListingDetailPage() {
         </div>
       </div>
 
-      {/* Booking Dialog */}
-      <Dialog open={bookingOpen} onOpenChange={setBookingOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Book a Session</DialogTitle>
-            <DialogDescription>
-              Schedule a session with {listing.user.name}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <Label>Date</Label>
-              <Input
-                type="date"
-                min={minDate}
-                value={bookingDate}
-                onChange={(e) => setBookingDate(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Time</Label>
-              <Input
-                type="time"
-                value={bookingTime}
-                onChange={(e) => setBookingTime(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Duration</Label>
-              <Select value={bookingDuration} onValueChange={setBookingDuration}>
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="30">30 minutes</SelectItem>
-                  <SelectItem value="60">60 minutes</SelectItem>
-                  <SelectItem value="90">90 minutes</SelectItem>
-                  <SelectItem value="120">120 minutes</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <Separator />
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Cost</span>
-              <CreditBadge amount={listing.creditCost} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setBookingOpen(false)}
-              disabled={bookingLoading}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleBookSession}
-              disabled={bookingLoading || !bookingDate || !bookingTime}
-            >
-              {bookingLoading && <Loader2 className="size-4 animate-spin" />}
-              Confirm Booking
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {listing && (
+        <BookSessionDialog
+          isOpen={proposalOpen}
+          onClose={() => setProposalOpen(false)}
+          targetTeacherId={listing.user.id}
+          targetListingId={listing.id}
+          targetListingTitle={listing.title}
+        />
+      )}
     </div>
   );
 }

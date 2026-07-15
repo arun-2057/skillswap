@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouterStore } from '@/store/router-store';
+import { safeJsonArray } from '@/lib/safe-json';
+import { useRouter, useParams } from 'next/navigation';
 import { useAuthStore } from '@/store/auth-store';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -26,16 +27,16 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StarRating } from '@/components/common/star-rating';
-import { CreditBadge } from '@/components/common/credit-badge';
+import { SkillLevelIndicator } from '@/components/common/skill-level-indicator';
 import { EmptyState } from '@/components/common/empty-state';
 import { LoadingState } from '@/components/common/loading-state';
+import { VerificationBadge } from '@/components/common/verification-badge';
 import {
   ArrowLeft,
   Edit,
   Save,
   X,
   Loader2,
-  Coins,
   Star,
   MapPin,
   Calendar,
@@ -48,12 +49,16 @@ interface ProfileData {
   bio: string | null;
   avatar: string | null;
   timezone: string;
-  creditBalance: number;
   averageRating: number;
   skillsOffered: string;
   skillsWanted: string;
   isOnboarded: boolean;
   createdAt: string;
+
+  // Trust metrics (optional for backwards compatibility)
+  trustScore?: number;
+  completionRate?: number;
+  accountAgeDays?: number;
 }
 
 interface ReviewData {
@@ -72,7 +77,8 @@ interface ListingCardData {
   id: string;
   title: string;
   category: string;
-  creditCost: number;
+  difficultyLevel: 'beginner' | 'intermediate' | 'advanced' | 'expert';
+  estimatedDuration: number;
   tags: string;
 }
 
@@ -97,11 +103,12 @@ const TIMEZONES = [
   'Pacific/Auckland',
 ];
 
-export function ProfilePage() {
-  const { route, navigate, goBack } = useRouterStore();
+export function ProfilePage({ profileId }: { profileId?: string }) {
+  const router = useRouter();
+  const params = useParams();
   const { user, isAuthenticated, setUser } = useAuthStore();
-  const profileId = route.page === 'profile' ? route.id : undefined;
-  const isEditProfile = route.page === 'edit-profile';
+  const resolvedProfileId = profileId || params?.id;
+  const isEditProfile = false;
 
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [reviews, setReviews] = useState<ReviewData[]>([]);
@@ -248,7 +255,7 @@ export function ProfilePage() {
     <div className="flex-1 mx-auto max-w-4xl px-4 sm:px-6 py-8">
       {/* Back button */}
       {!isOwnProfile && (
-        <Button variant="ghost" size="sm" className="mb-6 -ml-2" onClick={goBack}>
+        <Button variant="ghost" size="sm" className="mb-6 -ml-2" onClick={() => router.back()}>
           <ArrowLeft className="size-4 mr-1" />
           Back
         </Button>
@@ -352,11 +359,37 @@ export function ProfilePage() {
                       <Calendar className="size-3.5" />
                       Joined {memberSince}
                     </div>
-                    <div className="flex items-center gap-1">
-                      <Star className="size-3.5" />
-                      {profile.averageRating > 0
-                        ? `${profile.averageRating.toFixed(1)} avg rating`
-                        : 'No reviews yet'}
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-1">
+                      <div className="flex items-center gap-1">
+                        <Star className="size-3.5" />
+                        {profile.averageRating > 0
+                          ? `${profile.averageRating.toFixed(1)} avg rating`
+                          : 'No reviews yet'}
+                      </div>
+
+                      {(() => {
+                        const ratingBasedVerified = profile.averageRating >= 4.5;
+                        const trustBasedVerified =
+                          typeof profile.trustScore === 'number' &&
+                          profile.trustScore >= 75;
+
+                        const verified = ratingBasedVerified || trustBasedVerified;
+                        return <VerificationBadge verified={verified} />;
+                      })()}
+
+                      {typeof profile.trustScore === 'number' && (
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                            Trust
+                          </span>
+                          <span className="text-sm font-semibold">
+                            {profile.trustScore}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            /100
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </>
@@ -371,10 +404,10 @@ export function ProfilePage() {
               <div className="grid grid-cols-3 gap-4 text-center">
                 <div>
                   <div className="flex items-center justify-center gap-1">
-                    <Coins className="size-4 text-muted-foreground" />
+                    <Star className="size-4 text-muted-foreground" />
                   </div>
-                  <p className="text-lg font-bold mt-1">{profile.creditBalance}</p>
-                  <p className="text-xs text-muted-foreground">Credits</p>
+                  <p className="text-lg font-bold mt-1">—</p>
+                  <p className="text-xs text-muted-foreground">Learning</p>
                 </div>
                 <div>
                   <div className="flex items-center justify-center gap-1">
@@ -448,13 +481,13 @@ export function ProfilePage() {
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {listings.map((listing) => {
-              const tags: string[] = JSON.parse(listing.tags || '[]');
+              const tags = safeJsonArray(listing.tags);
               return (
                 <Card
                   key={listing.id}
                   className="cursor-pointer hover:shadow-md transition-shadow"
                   onClick={() =>
-                    navigate({ page: 'listing', id: listing.id })
+                    router.push(`/listing/${listing.id}`)
                   }
                 >
                   <CardContent className="pt-6">
@@ -473,7 +506,7 @@ export function ProfilePage() {
                         ))}
                       </div>
                     )}
-                    <CreditBadge amount={listing.creditCost} size="sm" />
+                    <SkillLevelIndicator level={listing.difficultyLevel} size="sm" />
                   </CardContent>
                 </Card>
               );
@@ -489,14 +522,20 @@ export function ProfilePage() {
             Reviews ({reviews.length})
           </h2>
           {reviews.length === 0 ? (
-            <EmptyState
-              title="No reviews yet"
-              description={
-                isOwnProfile
-                  ? 'Complete sessions to receive reviews from learners.'
-                  : `${profile.name} hasn't received any reviews yet.`
-              }
-            />
+            <div>
+              <EmptyState
+                title="First swap, first reputation"
+                description={
+                  isOwnProfile
+                    ? 'Complete your first swap to start receiving reviews and build trust.'
+                    : `New here—be the first to leave feedback for ${profile.name} after a completed swap.`
+                }
+                action={{
+                  label: isOwnProfile ? 'Find your first swap' : 'Start a swap',
+                  onClick: () => router.push('/browse'),
+                }}
+              />
+            </div>
           ) : (
             <div className="space-y-4">
               {reviews.map((review) => {
@@ -526,10 +565,9 @@ export function ProfilePage() {
                             <div>
                               <button
                                 onClick={() =>
-                                  navigate({
-                                    page: 'profile',
-                                    id: review.reviewer.id,
-                                  })
+                                  router.push(
+                                    `/profile/${review.reviewer.id}`
+                                  )
                                 }
                                 className="text-sm font-medium hover:underline"
                               >

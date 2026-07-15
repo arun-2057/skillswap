@@ -3,7 +3,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ThemeProvider } from 'next-themes';
 import { useState, type ReactNode } from 'react';
-import { SessionProviderWrapper } from './session-provider';
+import { SessionProvider } from './session-provider';
 
 interface ProvidersProps {
   children: ReactNode;
@@ -24,7 +24,7 @@ export function Providers({ children }: ProvidersProps) {
   );
 
   return (
-    <SessionProviderWrapper>
+    <SessionProvider>
       <QueryClientProvider client={queryClient}>
         <ThemeProvider
           attribute="class"
@@ -35,6 +35,6 @@ export function Providers({ children }: ProvidersProps) {
           {children}
         </ThemeProvider>
       </QueryClientProvider>
-    </SessionProviderWrapper>
+    </SessionProvider>
   );
 }

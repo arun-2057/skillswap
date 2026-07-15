@@ -1,11 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouterStore } from '@/store/router-store';
+import { useRouter, useParams } from 'next/navigation';
 import { useAuthStore } from '@/store/auth-store';
 import { createReviewSchema } from '@/lib/validators';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   Card,
   CardContent,
@@ -18,16 +19,20 @@ import { Textarea } from '@/components/ui/textarea';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StarRating } from '@/components/common/star-rating';
-import { CreditBadge } from '@/components/common/credit-badge';
+import { SkillLevelIndicator } from '@/components/common/skill-level-indicator';
+import { getInitials } from '@/lib/initials';
+import { VideoCallSignalingEntry } from './video-call-signaling-entry';
+import { VideoCallRoom } from '@/components/video-call/video-call-room';
+import { ChatView } from '@/components/chat/chat-view';
 import {
   ArrowLeft,
   Calendar,
   Clock,
-  Coins,
   CheckCircle,
   XCircle,
   Loader2,
   Send,
+  Video,
 } from 'lucide-react';
 
 interface SessionData {
@@ -35,7 +40,8 @@ interface SessionData {
   status: string;
   scheduledAt: string;
   durationMinutes: number;
-  creditCost: number;
+  difficultyLevel: 'beginner' | 'intermediate' | 'advanced' | 'expert';
+  estimatedDuration: number;
   createdAt: string;
   videoLink: string | null;
   listing: {
@@ -81,10 +87,11 @@ const STATUS_STYLES: Record<string, { bg: string; label: string }> = {
   },
 };
 
-export function SessionDetailPage() {
-  const { route, navigate, goBack } = useRouterStore();
+export function SessionDetailPage({ sessionId }: { sessionId?: string }) {
+  const router = useRouter();
+  const params = useParams();
   const { user } = useAuthStore();
-  const sessionId = route.page === 'session' ? route.id : '';
+  const resolvedSessionId = sessionId || (params?.id as string);
   const [session, setSession] = useState<SessionData | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
@@ -93,6 +100,45 @@ export function SessionDetailPage() {
   const [reviewRating, setReviewRating] = useState(0);
   const [reviewComment, setReviewComment] = useState('');
   const [submittingReview, setSubmittingReview] = useState(false);
+  
+  // Video call state
+  const [videoCallRoomId, setVideoCallRoomId] = useState<string | null>(null);
+  const [showVideoCall, setShowVideoCall] = useState(false);
+  const [videoLinkInput, setVideoLinkInput] = useState('');
+  const [savingVideoLink, setSavingVideoLink] = useState(false);
+
+  // Session conversation (teacher <-> learner chat)
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversationLoading, setConversationLoading] = useState(false);
+
+  useEffect(() => {
+    if (!session) return;
+    if (session.status !== 'PENDING' && session.status !== 'CONFIRMED') return;
+    if (!resolvedSessionId) return;
+
+    let cancelled = false;
+    async function loadConversation() {
+      setConversationLoading(true);
+      try {
+        const res = await fetch(`/api/sessions/${resolvedSessionId}/conversation`);
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && json.data?.id && !cancelled) {
+            setConversationId(json.data.id);
+          }
+        }
+      } catch (err) {
+        console.error('Error loading session conversation:', err);
+      } finally {
+        if (!cancelled) setConversationLoading(false);
+      }
+    }
+
+    loadConversation();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.status, resolvedSessionId]);
 
   const isTeacher = user?.id === session?.teacher.id;
   const isLearner = user?.id === session?.learner.id;
@@ -100,60 +146,108 @@ export function SessionDetailPage() {
     session?.reviews.some((r) => r.reviewerId === user?.id) ?? false;
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (session) {
+      setVideoLinkInput(session.videoLink || '');
+    }
+  }, [session?.videoLink]);
+
+  useEffect(() => {
+    if (!resolvedSessionId) return;
     async function fetchSession() {
       try {
-        const res = await fetch(`/api/sessions/${sessionId}`);
+        const res = await fetch(`/api/sessions/${resolvedSessionId}`);
         if (res.ok) {
           const json = await res.json();
           if (json.success && json.data) {
             setSession(json.data);
           } else {
             toast.error('Session not found');
-            goBack();
+            router.push('/sessions');
           }
         } else {
           toast.error('Failed to load session');
-          goBack();
+          router.push('/sessions');
         }
       } catch {
         toast.error('Something went wrong');
-        goBack();
+        router.push('/sessions');
       } finally {
         setLoading(false);
       }
     }
     fetchSession();
-  }, [sessionId, goBack]);
+  }, [resolvedSessionId, router]);
 
-  async function handleStatusUpdate(newStatus: string) {
+  async function updateSession(patch: Record<string, unknown>) {
     if (!session) return;
     setActionLoading(true);
     try {
-      const res = await fetch(`/api/sessions/${session.id}/status`, {
+      const res = await fetch(`/api/sessions/${session.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
+        body: JSON.stringify(patch),
       });
 
       const json = await res.json();
       if (res.ok) {
-        setSession({ ...session, status: newStatus });
-        toast.success(
-          newStatus === 'CONFIRMED'
-            ? 'Session confirmed!'
-            : newStatus === 'COMPLETED'
-              ? 'Session marked as complete!'
-              : 'Session cancelled.'
-        );
-      } else {
-        toast.error(json.error?.message || 'Failed to update session');
+        setSession({ ...session, ...(json.data || {}) });
+        return true;
       }
+      toast.error(json.error?.message || 'Failed to update session');
+      return false;
     } catch {
       toast.error('Something went wrong');
+      return false;
     } finally {
       setActionLoading(false);
     }
+  }
+
+  async function saveVideoLink() {
+    setSavingVideoLink(true);
+    const ok = await updateSession({ videoLink: videoLinkInput });
+    if (ok) {
+      toast.success('Meeting link saved');
+    }
+    setSavingVideoLink(false);
+  }
+
+  async function handleStatusUpdate(newStatus: string) {
+    const ok = await updateSession({ status: newStatus });
+    if (ok) {
+      toast.success(
+        newStatus === 'CONFIRMED'
+          ? 'Session confirmed!'
+          : newStatus === 'COMPLETED'
+            ? 'Session marked as complete!'
+            : 'Session cancelled.'
+      );
+    }
+  }
+
+  async function handleVideoCallInit() {
+    if (!session) return;
+    
+    try {
+      const res = await fetch(`/api/sessions/${session.id}/video-call/init`, {
+        method: 'POST',
+      });
+      
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setVideoCallRoomId(json.data.roomId);
+        setShowVideoCall(true);
+      } else {
+        toast.error(json.error?.message || 'Failed to start video call');
+      }
+    } catch (err) {
+      toast.error('Failed to start video call');
+    }
+  }
+
+  function handleEndVideoCall() {
+    setShowVideoCall(false);
+    setVideoCallRoomId(null);
   }
 
   async function handleSubmitReview() {
@@ -221,18 +315,9 @@ export function SessionDetailPage() {
   const style = STATUS_STYLES[session.status] || STATUS_STYLES.PENDING;
   const scheduledDate = new Date(session.scheduledAt);
 
-  function getInitials(name: string) {
-    return name
-      .split(' ')
-      .map((w) => w[0])
-      .join('')
-      .toUpperCase()
-      .slice(0, 2);
-  }
-
   return (
     <div className="flex-1 mx-auto max-w-3xl px-4 sm:px-6 py-8">
-      <Button variant="ghost" size="sm" className="mb-6 -ml-2" onClick={goBack}>
+      <Button variant="ghost" size="sm" className="mb-6 -ml-2" onClick={() => router.back()}>
         <ArrowLeft className="size-4 mr-1" />
         Back
       </Button>
@@ -288,9 +373,12 @@ export function SessionDetailPage() {
               </div>
             </div>
             <div>
-              <p className="text-xs text-muted-foreground mb-1">Credits</p>
-              <div className="flex items-center justify-center">
-                <CreditBadge amount={session.creditCost} />
+              <p className="text-xs text-muted-foreground mb-1">Learning time</p>
+              <div className="flex items-center justify-center gap-2">
+                <SkillLevelIndicator level={session.difficultyLevel} size="sm" />
+                <span className="text-sm font-medium">
+                  {session.estimatedDuration} min
+                </span>
               </div>
             </div>
           </div>
@@ -311,10 +399,10 @@ export function SessionDetailPage() {
                   {getInitials(session.teacher.name)}
                 </AvatarFallback>
               </Avatar>
-              <button
-                onClick={() =>
-                  navigate({ page: 'profile', id: session.teacher.id })
-                }
+               <button
+                 onClick={() =>
+                   router.push(`/profile/${session.teacher.id}`)
+                 }
                 className="font-medium hover:underline"
               >
                 {session.teacher.name}
@@ -339,10 +427,10 @@ export function SessionDetailPage() {
                   {getInitials(session.learner.name)}
                 </AvatarFallback>
               </Avatar>
-              <button
-                onClick={() =>
-                  navigate({ page: 'profile', id: session.learner.id })
-                }
+               <button
+                 onClick={() =>
+                   router.push(`/profile/${session.learner.id}`)
+                 }
                 className="font-medium hover:underline"
               >
                 {session.learner.name}
@@ -365,7 +453,7 @@ export function SessionDetailPage() {
         <CardContent>
           <button
             onClick={() =>
-              navigate({ page: 'listing', id: session.listing.id })
+              router.push(`/listing/${session.listing.id}`)
             }
             className="font-medium hover:underline"
           >
@@ -433,6 +521,115 @@ export function SessionDetailPage() {
           </Button>
         )}
       </div>
+
+      {/* Session Video Call */}
+      {(session.status === 'PENDING' || session.status === 'CONFIRMED') && (
+        <div className="mb-6">
+          <h2 className="text-lg font-semibold mb-3">Video Call</h2>
+          <Card>
+            <CardContent className="pt-6 space-y-4">
+              {session.videoLink ? (
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    A meeting link has been added for this session.
+                  </p>
+                  <a
+                    href={session.videoLink}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-muted"
+                  >
+                    <Video className="size-4" />
+                    Join meeting
+                  </a>
+                  {isTeacher && (
+                    <div className="flex items-center gap-2 pt-2">
+                      <Input
+                        value={videoLinkInput}
+                        onChange={(e) => setVideoLinkInput(e.target.value)}
+                        placeholder="https://meet.google.com/..."
+                        className="h-9"
+                      />
+                      <Button
+                        size="sm"
+                        disabled={savingVideoLink}
+                        onClick={saveVideoLink}
+                      >
+                        {savingVideoLink && <Loader2 className="size-3 animate-spin" />}
+                        Save link
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ) : showVideoCall ? (
+                <VideoCallRoom
+                  roomId={videoCallRoomId!}
+                  sessionId={session.id}
+                  onEndCall={handleEndVideoCall}
+                  className="w-full"
+                />
+              ) : (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    Start the video call or add an external Google Meet/Zoom link.
+                  </p>
+
+                  <VideoCallSignalingEntry sessionId={session.id} />
+
+                  {isTeacher && (
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={videoLinkInput}
+                        onChange={(e) => setVideoLinkInput(e.target.value)}
+                        placeholder="Paste Google Meet / Zoom link"
+                        className="h-9"
+                      />
+                      <Button
+                        size="sm"
+                        disabled={savingVideoLink}
+                        onClick={saveVideoLink}
+                      >
+                        {savingVideoLink && <Loader2 className="size-3 animate-spin" />}
+                        Save link
+                      </Button>
+                    </div>
+                  )}
+
+                  <div className="rounded-lg border bg-accent/30 p-4">
+                    <p className="text-sm font-medium">Features included:</p>
+                    <ul className="mt-2 text-sm text-muted-foreground list-disc pl-5 space-y-1">
+                      <li>High-quality video and audio streaming</li>
+                      <li>Screen sharing capability</li>
+                      <li>Real-time WebRTC signaling</li>
+                      <li>Responsive design for all devices</li>
+                    </ul>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Session Chat */}
+      {(session.status === 'PENDING' || session.status === 'CONFIRMED') && (
+        <div className="mb-6">
+          <h2 className="text-lg font-semibold mb-3">Session Chat</h2>
+          {conversationLoading ? (
+            <div className="h-[600px] rounded-xl border bg-card animate-pulse" />
+          ) : conversationId ? (
+            <ChatView conversationId={conversationId} currentUserId={user?.id || ''} />
+          ) : (
+            <Card>
+              <CardContent className="pt-6">
+                <p className="text-sm text-muted-foreground">
+                  Couldn&apos;t load the chat for this session.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
 
       {/* Reviews section */}
       {session.reviews.length > 0 && (

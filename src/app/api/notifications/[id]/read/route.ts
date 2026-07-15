@@ -1,41 +1,46 @@
-import { db } from "@/lib/db";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
-import { success, notFound, unauthorized, forbidden, serverError } from "@/lib/api-utils";
+import { NextRequest, NextResponse } from 'next/server';
+import { getAuthUser, createServerClient } from '@/lib/auth-helpers';
 
 export async function POST(
-  _request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await requireAuth();
+    const user = await getAuthUser();
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: 'Authentication required' },
+        { status: 401 }
+      );
+    }
+
     const { id } = await params;
+    const supabase = await createServerClient();
 
-    const notification = await db.notification.findUnique({
-      where: { id },
-    });
+    const { error } = await supabase
+      .from('notifications')
+      .update({ is_read: true })
+      .eq('id', id)
+      .eq('user_id', user.id);
 
-    if (!notification) {
-      return notFound("Notification not found");
+    if (error) {
+      console.error('Error marking notification as read:', error);
+      return NextResponse.json(
+        { success: false, error: 'Failed to mark notification as read' },
+        { status: 500 }
+      );
     }
 
-    if (notification.userId !== user.id) {
-      return forbidden("You can only mark your own notifications as read");
-    }
-
-    const updatedNotification = await db.notification.update({
-      where: { id },
-      data: { isRead: true },
+    return NextResponse.json({
+      success: true,
+      message: 'Notification marked as read'
     });
 
-    return success({
-      id: updatedNotification.id,
-      isRead: updatedNotification.isRead,
-    });
-  } catch (err) {
-    if (err instanceof AuthError) {
-      return unauthorized(err.message);
-    }
-    console.error("[POST /api/notifications/[id]/read]", err);
-    return serverError();
+  } catch (error) {
+    console.error('Mark notification read error:', error);
+    return NextResponse.json(
+      { success: false, error: 'Internal server error' },
+      { status: 500 }
+    );
   }
 }

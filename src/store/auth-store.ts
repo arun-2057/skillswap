@@ -8,7 +8,6 @@ interface AuthState {
     bio: string | null;
     avatar: string | null;
     timezone: string;
-    creditBalance: number;
     skillsOffered: string[];
     skillsWanted: string[];
     averageRating: number;
@@ -18,7 +17,8 @@ interface AuthState {
   isLoading: boolean;
   setUser: (user: AuthState["user"]) => void;
   setLoading: (loading: boolean) => void;
-  logout: () => void;
+  logout: (signOutCallback?: (() => Promise<void> | void) | null) => void;
+  setUnauthenticated: () => void;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -27,5 +27,9 @@ export const useAuthStore = create<AuthState>((set) => ({
   isLoading: true,
   setUser: (user) => set({ user, isAuthenticated: !!user, isLoading: false }),
   setLoading: (isLoading) => set({ isLoading }),
-  logout: () => set({ user: null, isAuthenticated: false, isLoading: false }),
+  logout: async (signOutCallback) => {
+    await signOutCallback?.();
+    set({ user: null, isAuthenticated: false, isLoading: false });
+  },
+  setUnauthenticated: () => set({ user: null, isAuthenticated: false, isLoading: false }),
 }));

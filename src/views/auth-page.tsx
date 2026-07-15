@@ -1,9 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { signIn } from 'next-auth/react';
-import { useRouterStore, type AppRoute } from '@/store/router-store';
+import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/store/auth-store';
+import { supabase } from '@/lib/supabase';
 import { loginSchema, registerSchema } from '@/lib/validators';
 import { toast } from 'sonner';
 import {
@@ -18,50 +18,100 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
-import { Coins, Loader2 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Loader2, Sparkles, Users, ArrowRight } from 'lucide-react';
 
 export function AuthPage() {
-  const { navigate } = useRouterStore();
+  const router = useRouter();
   const { setUser } = useAuthStore();
 
   return (
-    <div className="flex min-h-[calc(100vh-8rem)] items-center justify-center px-4 py-12">
-      <Card className="w-full max-w-md">
-        <Tabs defaultValue="signin">
-          <CardHeader className="text-center">
-            <div className="flex justify-center mb-2">
-              <Coins className="size-8" />
+    <div className="relative flex min-h-[calc(100vh-8rem)] items-center justify-center px-4 py-12 overflow-hidden">
+      {/* Background */}
+      <div className="absolute inset-0 -z-10">
+        <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-background to-background" />
+        <div className="absolute top-0 left-1/4 size-[500px] bg-primary/25 blur-[120px] rounded-full animate-pulse-slow" />
+        <div className="absolute bottom-0 right-1/4 size-[400px] bg-chart-2/25 blur-[100px] rounded-full animate-pulse-slow" style={{ animationDelay: '1s' }} />
+      </div>
+
+      <div className="w-full max-w-md">
+        {/* Logo & Social Proof */}
+        <div className="text-center mb-8 animate-in">
+          <div className="flex justify-center mb-4">
+            <div className="relative">
+              <div className="gradient-ring">
+                <img
+                  src="/logo-mark.svg"
+                  alt="SkillSwap"
+                  className="size-12 rounded-2xl"
+                />
+              </div>
+              <div className="absolute -top-1 -right-1 animate-float">
+                <Sparkles className="size-4 text-amber-400" />
+              </div>
             </div>
-            <CardTitle className="text-2xl">Welcome to SkillSwap</CardTitle>
-            <CardDescription>
-              Trade skills, not money. Sign in to get started.
-            </CardDescription>
-            <TabsList className="mx-auto mt-4">
-              <TabsTrigger value="signin">Sign In</TabsTrigger>
-              <TabsTrigger value="signup">Sign Up</TabsTrigger>
-            </TabsList>
-          </CardHeader>
+          </div>
+          <Badge variant="outline" className="mb-4 glass-panel border-primary/20 text-xs">
+            <Users className="size-3 mr-1.5 text-primary" />
+            Join 10,000+ skill swappers
+          </Badge>
+        </div>
 
-          <CardContent>
-            <TabsContent value="signin">
-              <SignInForm onNavigate={navigate} setUser={setUser} />
-            </TabsContent>
-            <TabsContent value="signup">
-              <SignUpForm onNavigate={navigate} setUser={setUser} />
-            </TabsContent>
-          </CardContent>
+        {/* Auth Card */}
+        <Card className="w-full glass-panel border-primary/10 shadow-[0_24px_70px_rgba(15,23,42,0.08)] animate-in-delay-1">
+          <Tabs defaultValue="signin">
+            <CardHeader className="text-center pb-4">
+              <CardTitle className="text-2xl gradient-text">Welcome to SkillSwap</CardTitle>
+              <CardDescription>
+                Trade skills, not money. Sign in to get started.
+              </CardDescription>
+              <TabsList className="mx-auto mt-4">
+                <TabsTrigger value="signin">Sign In</TabsTrigger>
+                <TabsTrigger value="signup">Sign Up</TabsTrigger>
+              </TabsList>
+            </CardHeader>
 
-          <CardFooter className="justify-center text-xs text-muted-foreground">
-            By continuing, you agree to SkillSwap&apos;s Terms of Service
-          </CardFooter>
-        </Tabs>
-      </Card>
+            <CardContent>
+              <TabsContent value="signin">
+                <SignInForm onNavigate={router.push} setUser={setUser} />
+              </TabsContent>
+              <TabsContent value="signup">
+                <SignUpForm onNavigate={router.push} setUser={setUser} />
+              </TabsContent>
+            </CardContent>
+
+            <CardFooter className="flex-col gap-3 pt-0">
+              <div className="relative w-full">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t" />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-card px-2 text-muted-foreground">Or continue with</span>
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                className="w-full glass-panel"
+                onClick={() => router.push('/browse')}
+              >
+                Browse as Guest
+                <ArrowRight className="size-4 ml-2" />
+              </Button>
+            </CardFooter>
+          </Tabs>
+        </Card>
+
+        {/* Footer */}
+        <p className="text-center text-xs text-muted-foreground mt-6 animate-in-delay-2">
+          By continuing, you agree to SkillSwap&apos;s Terms of Service
+        </p>
+      </div>
     </div>
   );
 }
 
-type NavigateFn = (route: AppRoute) => void;
-type SetUserFn = Parameters<typeof useAuthStore.getState>['setUser'] extends (u: infer U) => void ? (u: U) => void : never;
+type NavigateFn = (href: string) => void;
+type SetUserFn = (user: any) => void;
 
 function SignInForm({
   onNavigate,
@@ -85,29 +135,48 @@ function SignInForm({
 
     setLoading(true);
     try {
-      const res = await signIn('credentials', {
+      const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
-        redirect: false,
       });
 
-      if (res?.error) {
+      if (error) {
         toast.error('Invalid email or password');
         return;
       }
 
-      const meRes = await fetch('/api/users/me');
-      if (meRes.ok) {
-        const meJson = await meRes.json();
-        if (meJson.success && meJson.data) {
-          setUser(meJson.data);
-          if (!meJson.data.isOnboarded) {
-            onNavigate({ page: 'onboarding' });
-          } else {
-            onNavigate({ page: 'home' });
-          }
-          toast.success('Welcome back!');
+      if (data.user) {
+        const { data: profileData, error: profileError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', data.user.id)
+          .single();
+
+        if (profileError) {
+          toast.error('Profile not found');
+          return;
         }
+
+        const userData = {
+          id: data.user.id,
+          email: data.user.email!,
+          name: profileData.name || data.user.user_metadata?.full_name || null,
+          bio: profileData.bio || null,
+          avatar: profileData.avatar_url || null,
+          timezone: profileData.timezone || 'UTC',
+          skillsOffered: profileData.skills_offered || [],
+          skillsWanted: profileData.skills_wanted || [],
+          averageRating: profileData.average_rating || 0,
+          isOnboarded: profileData.is_onboarded || false,
+        };
+
+        setUser(userData);
+        if (!userData.isOnboarded) {
+          onNavigate('/onboarding');
+        } else {
+          onNavigate('/');
+        }
+        toast.success('Welcome back!');
       }
     } catch {
       toast.error('Something went wrong. Please try again.');
@@ -127,6 +196,7 @@ function SignInForm({
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required
+          className="bg-background/50"
         />
       </div>
       <div className="space-y-2">
@@ -138,9 +208,10 @@ function SignInForm({
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           required
+          className="bg-background/50"
         />
       </div>
-      <Button type="submit" className="w-full" disabled={loading}>
+      <Button type="submit" className="w-full shadow-md hover:shadow-lg transition-all" disabled={loading}>
         {loading && <Loader2 className="size-4 animate-spin" />}
         Sign In
       </Button>
@@ -177,36 +248,78 @@ function SignUpForm({
 
     setLoading(true);
     try {
-      const res = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password }),
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            full_name: name,
+          },
+        },
       });
 
-      const json = await res.json();
-
-      if (!res.ok) {
-        toast.error(json.error?.message || 'Registration failed');
+      if (error) {
+        toast.error(error.message);
         return;
       }
 
-      toast.success('Account created! Signing you in...');
+      if (data.user) {
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .insert({
+            id: data.user.id,
+            email: data.user.email!,
+            name: name,
+            timezone: 'UTC',
+            skills_offered: [],
+            skills_wanted: [],
+            average_rating: 0,
+            is_onboarded: false,
+          });
 
-      const signInRes = await signIn('credentials', {
-        email,
-        password,
-        redirect: false,
-      });
-
-      if (signInRes?.ok) {
-        const meRes = await fetch('/api/users/me');
-        if (meRes.ok) {
-          const meJson = await meRes.json();
-          if (meJson.success && meJson.data) {
-            setUser(meJson.data);
-            onNavigate({ page: 'onboarding' });
-          }
+        if (profileError) {
+          toast.error('Failed to create profile');
+          return;
         }
+
+        toast.success('Account created! Signing you in...');
+
+        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+
+        if (signInError || !signInData.user) {
+          toast.error('Failed to sign in after registration');
+          return;
+        }
+
+        const { data: profileData, error: profileGetError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', signInData.user.id)
+          .single();
+
+        if (profileGetError) {
+          toast.error('Profile not found');
+          return;
+        }
+
+        const userData = {
+          id: signInData.user.id,
+          email: signInData.user.email!,
+          name: profileData.name || signInData.user.user_metadata?.full_name || null,
+          bio: profileData.bio || null,
+          avatar: profileData.avatar_url || null,
+          timezone: profileData.timezone || 'UTC',
+          skillsOffered: profileData.skills_offered || [],
+          skillsWanted: profileData.skills_wanted || [],
+          averageRating: profileData.average_rating || 0,
+          isOnboarded: profileData.is_onboarded || false,
+        };
+
+        setUser(userData);
+        onNavigate('/onboarding');
       }
     } catch {
       toast.error('Something went wrong. Please try again.');
@@ -225,6 +338,7 @@ function SignUpForm({
           value={name}
           onChange={(e) => setName(e.target.value)}
           required
+          className="bg-background/50"
         />
       </div>
       <div className="space-y-2">
@@ -236,6 +350,7 @@ function SignUpForm({
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required
+          className="bg-background/50"
         />
       </div>
       <div className="space-y-2">
@@ -247,6 +362,7 @@ function SignUpForm({
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           required
+          className="bg-background/50"
         />
       </div>
       <div className="space-y-2">
@@ -258,9 +374,10 @@ function SignUpForm({
           value={confirmPassword}
           onChange={(e) => setConfirmPassword(e.target.value)}
           required
+          className="bg-background/50"
         />
       </div>
-      <Button type="submit" className="w-full" disabled={loading}>
+      <Button type="submit" className="w-full shadow-md hover:shadow-lg transition-all" disabled={loading}>
         {loading && <Loader2 className="size-4 animate-spin" />}
         Create Account
       </Button>

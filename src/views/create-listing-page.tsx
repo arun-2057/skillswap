@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouterStore } from '@/store/router-store';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuthStore } from '@/store/auth-store';
 import { createListingSchema, categories } from '@/lib/validators';
 import { toast } from 'sonner';
@@ -25,55 +25,60 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { TagInput } from '@/components/common/tag-input';
-import { ArrowLeft, Loader2, Save } from 'lucide-react';
+import { ArrowLeft, Loader2, Save, Sparkles, CalendarDays, Tags } from 'lucide-react';
+import {
+  getListingByIdAction,
+  createListingAction,
+  updateListingAction,
+} from '@/app/actions/listings';
 
-export function CreateListingPage() {
-  const { route, navigate, goBack } = useRouterStore();
+export function CreateListingPage({ editId }: { editId?: string }) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { user, isAuthenticated } = useAuthStore();
-  const editId = route.page === 'create-listing' ? route.editId : undefined;
+  const resolvedEditId = editId || searchParams?.get('editId') || undefined;
 
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [description, setDescription] = useState('');
-  const [creditCost, setCreditCost] = useState('');
   const [availability, setAvailability] = useState('');
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(!!editId);
 
+  const listingId = editId!;
+
   useEffect(() => {
-    if (!editId) return;
+    if (!listingId) return;
 
     async function fetchListing() {
       try {
-        const res = await fetch(`/api/listings/${editId}`);
-        if (res.ok) {
-          const json = await res.json();
-          if (json.success && json.data) {
-            const data = json.data;
-            setTitle(data.title);
-            setCategory(data.category);
-            setTags(JSON.parse(data.tags || '[]'));
-            setDescription(data.description);
-            setCreditCost(String(data.creditCost));
-            setAvailability(data.availability);
-          }
+        const data = await getListingByIdAction(listingId);
+        if (data && data.id) {
+          setTitle(data.title);
+          setCategory(data.category);
+          setTags(JSON.parse((data as any).tags || '[]'));
+          setDescription(data.description);
+          setAvailability((data as any).availability || '');
+        } else {
+          toast.error('Listing not found');
+          router.push('/browse');
         }
       } catch {
         toast.error('Failed to load listing');
-        goBack();
+        router.push('/browse');
       } finally {
         setFetching(false);
       }
     }
     fetchListing();
-  }, [editId, goBack]);
+  }, [listingId, router]);
 
   useEffect(() => {
     if (!isAuthenticated) {
-      navigate({ page: 'home' });
+      router.push('/');
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, router]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -83,7 +88,6 @@ export function CreateListingPage() {
       category,
       tags,
       description,
-      creditCost: parseInt(creditCost),
       availability,
     });
 
@@ -94,26 +98,26 @@ export function CreateListingPage() {
 
     setLoading(true);
     try {
-      const url = editId
-        ? `/api/listings/${editId}`
-        : '/api/listings';
-      const method = editId ? 'PUT' : 'POST';
+      const formData = new FormData();
+      formData.append('title', title);
+      formData.append('description', description);
+      formData.append('category', category);
+      formData.append('tags', JSON.stringify(tags));
+      formData.append('availability', availability);
 
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(result.data),
-      });
+      const action = editId
+        ? updateListingAction(editId, formData)
+        : createListingAction(formData);
 
-      const json = await res.json();
+      const result = await action;
 
-      if (!res.ok) {
-        toast.error(json.error?.message || 'Failed to save listing');
+      if (!result.ok) {
+        toast.error(result.error || 'Failed to save listing');
         return;
       }
 
       toast.success(editId ? 'Listing updated!' : 'Listing created!');
-      navigate({ page: 'browse' });
+      router.push('/browse');
     } catch {
       toast.error('Something went wrong');
     } finally {
@@ -140,7 +144,7 @@ export function CreateListingPage() {
         variant="ghost"
         size="sm"
         className="mb-6 -ml-2"
-        onClick={goBack}
+        onClick={() => router.push('/browse')}
       >
         <ArrowLeft className="size-4 mr-1" />
         Back
@@ -152,19 +156,23 @@ export function CreateListingPage() {
           <CardDescription>
             {editId
               ? 'Update your skill listing details'
-              : 'Share your skills with the community'}
+              : 'Make it easy for learners to understand what you can teach and when you are available.'}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-2">
-              <Label htmlFor="listing-title">Title *</Label>
+              <Label htmlFor="listing-title" className="flex items-center gap-2">
+                <Sparkles className="size-4 text-primary" />
+                Title *
+              </Label>
               <Input
                 id="listing-title"
-                placeholder="e.g., Learn Python for Data Science"
+                placeholder="e.g., Python for Data Science"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
               />
+              <p className="text-xs text-muted-foreground">Use a clear, outcome-focused title so learners instantly know what they will gain.</p>
             </div>
 
             <div className="space-y-2">
@@ -184,12 +192,16 @@ export function CreateListingPage() {
             </div>
 
             <div className="space-y-2">
-              <Label>Tags</Label>
+              <Label className="flex items-center gap-2">
+                <Tags className="size-4 text-primary" />
+                Tags
+              </Label>
               <TagInput
                 tags={tags}
                 onChange={setTags}
                 placeholder="Add relevant tags..."
               />
+              <p className="text-xs text-muted-foreground">Add 3–5 tags to improve discovery, such as topic, level, or format.</p>
             </div>
 
             <div className="space-y-2">
@@ -206,44 +218,30 @@ export function CreateListingPage() {
               </p>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="listing-cost">Credit Cost *</Label>
-                <Input
-                  id="listing-cost"
-                  type="number"
-                  min="1"
-                  max="500"
-                  placeholder="e.g., 25"
-                  value={creditCost}
-                  onChange={(e) => setCreditCost(e.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  1–500 credits
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Availability *</Label>
-                <Select value={availability} onValueChange={setAvailability}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Select availability" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="WEEKDAYS">Weekdays</SelectItem>
-                    <SelectItem value="WEEKENDS">Weekends</SelectItem>
-                    <SelectItem value="BOTH">Both</SelectItem>
-                    <SelectItem value="FLEXIBLE">Flexible</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+            <div className="space-y-2">
+              <Label className="flex items-center gap-2">
+                <CalendarDays className="size-4 text-primary" />
+                Availability *
+              </Label>
+              <Select value={availability} onValueChange={setAvailability}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select availability" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="WEEKDAYS">Weekdays</SelectItem>
+                  <SelectItem value="WEEKENDS">Weekends</SelectItem>
+                  <SelectItem value="BOTH">Both</SelectItem>
+                  <SelectItem value="FLEXIBLE">Flexible</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">Let people know when you are usually available so they can plan around you.</p>
             </div>
 
             <div className="flex gap-3 pt-2">
               <Button
                 type="button"
                 variant="outline"
-                onClick={goBack}
+                onClick={() => router.push('/browse')}
                 disabled={loading}
               >
                 Cancel

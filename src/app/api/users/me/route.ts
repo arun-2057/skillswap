@@ -1,87 +1,81 @@
-import { NextRequest } from "next/server";
-import { z } from "zod/v4";
-import { db } from "@/lib/db";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
-import { success, error, unauthorized, serverError } from "@/lib/api-utils";
-
-const updateProfileSchema = z.object({
-  name: z.string().min(2, "Name must be at least 2 characters").max(50).optional(),
-  bio: z.string().max(500, "Bio must be under 500 characters").optional(),
-  timezone: z.string().min(1, "Timezone is required").optional(),
-  avatar: z.string().max(500, "Avatar URL must be under 500 characters").optional(),
-});
-
-export async function GET() {
-  try {
-    const user = await requireAuth();
-
-    return success({
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      bio: user.bio,
-      avatar: user.avatar,
-      timezone: user.timezone,
-      creditBalance: user.creditBalance,
-      skillsOffered: JSON.parse(user.skillsOffered),
-      skillsWanted: JSON.parse(user.skillsWanted),
-      averageRating: user.averageRating,
-      isOnboarded: user.isOnboarded,
-      createdAt: user.createdAt,
-      updatedAt: user.updatedAt,
-    });
-  } catch (err) {
-    if (err instanceof AuthError) {
-      return unauthorized(err.message);
-    }
-    console.error("[GET /api/users/me]", err);
-    return serverError();
-  }
-}
+import { NextRequest, NextResponse } from 'next/server';
+import { getAuthUser, createServerClient } from '@/lib/auth-helpers';
 
 export async function PUT(request: NextRequest) {
   try {
-    const user = await requireAuth();
+    const user = await getAuthUser();
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: 'Authentication required' },
+        { status: 401 }
+      );
+    }
 
     const body = await request.json();
-    const parsed = updateProfileSchema.safeParse(body);
+    const supabase = await createServerClient();
 
-    if (!parsed.success) {
-      return error("VALIDATION_ERROR", parsed.error.issues[0].message);
+    const { data, error } = await supabase
+      .from('profiles')
+      .update({
+        name: body.name,
+        bio: body.bio,
+        timezone: body.timezone,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', user.id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error updating profile:', error);
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: 500 }
+      );
     }
 
-    const { name, bio, timezone, avatar } = parsed.data;
+    return NextResponse.json({ success: true, data });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    return NextResponse.json(
+      { success: false, error: 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}
 
-    const updatedUser = await db.user.update({
-      where: { id: user.id },
-      data: {
-        ...(name !== undefined && { name }),
-        ...(bio !== undefined && { bio }),
-        ...(timezone !== undefined && { timezone }),
-        ...(avatar !== undefined && { avatar }),
-      },
-    });
-
-    return success({
-      id: updatedUser.id,
-      name: updatedUser.name,
-      email: updatedUser.email,
-      bio: updatedUser.bio,
-      avatar: updatedUser.avatar,
-      timezone: updatedUser.timezone,
-      creditBalance: updatedUser.creditBalance,
-      skillsOffered: JSON.parse(updatedUser.skillsOffered),
-      skillsWanted: JSON.parse(updatedUser.skillsWanted),
-      averageRating: updatedUser.averageRating,
-      isOnboarded: updatedUser.isOnboarded,
-      createdAt: updatedUser.createdAt,
-      updatedAt: updatedUser.updatedAt,
-    });
-  } catch (err) {
-    if (err instanceof AuthError) {
-      return unauthorized(err.message);
+export async function GET(request: NextRequest) {
+  try {
+    const user = await getAuthUser();
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: 'Authentication required' },
+        { status: 401 }
+      );
     }
-    console.error("[PUT /api/users/me]", err);
-    return serverError();
+
+    const supabase = await createServerClient();
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', user.id)
+      .single();
+
+    if (error) {
+      console.error('Error fetching profile:', error);
+      return NextResponse.json(
+        { success: false, error: 'Failed to fetch profile' },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({ success: true, data });
+  } catch (error) {
+    console.error('Fetch profile error:', error);
+    return NextResponse.json(
+      { success: false, error: 'Internal server error' },
+      { status: 500 }
+    );
   }
 }

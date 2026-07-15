@@ -1,187 +1,155 @@
-import { NextRequest } from "next/server";
-import { Prisma } from "@prisma/client";
-import { db } from "@/lib/db";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
-import { listingQuerySchema, createListingSchema } from "@/lib/validators";
-import {
-  success,
-  error,
-  unauthorized,
-  serverError,
-  paginatedResponse,
-} from "@/lib/api-utils";
+import { NextRequest, NextResponse } from 'next/server';
+import { getAuthUser, createServerClient } from '@/lib/auth-helpers';
 
 export async function GET(request: NextRequest) {
   try {
-    const searchParams = request.nextUrl.searchParams;
-    const queryParams = listingQuerySchema.safeParse(
-      Object.fromEntries(searchParams.entries())
-    );
+    const { searchParams } = new URL(request.url);
+    const limit = parseInt(searchParams.get('limit') || '12');
+    const sort = searchParams.get('sort') || 'newest';
+    const search = searchParams.get('search') || '';
+    const category = searchParams.get('category') || '';
 
-    if (!queryParams.success) {
-      return error("VALIDATION_ERROR", queryParams.error.issues[0].message);
-    }
+    const supabase = await createServerClient();
 
-    const {
-      search,
-      category,
-      tags,
-      minCredits,
-      maxCredits,
-      sort,
-      cursor,
-      limit,
-    } = queryParams.data;
-
-    // Build where clause
-    const where: Prisma.SkillListingWhereInput = {
-      isActive: true,
-    };
+    let query = supabase
+      .from('listings')
+      .select('*, profiles(id, full_name, avatar_url, average_rating)')
+      .eq('status', 'active')
+      .order('created_at', { ascending: sort === 'oldest' });
 
     if (search) {
-      where.OR = [
-        { title: { contains: search } },
-        { description: { contains: search } },
-        { tags: { contains: search } },
-      ];
+      query = query.or(`ilike.title.%${search}%,ilike.description.%${search}%`);
     }
 
     if (category) {
-      where.category = category;
+      query = query.eq('category', category);
     }
 
-    if (tags) {
-      const tagList = tags.split(",").map((t) => t.trim());
-      for (const tag of tagList) {
-        where.tags = { contains: tag };
-      }
+    const { data, error } = await query.limit(limit);
+
+    if (error) {
+      console.error('Error fetching listings:', error);
+      return NextResponse.json(
+        { success: false, error: 'Failed to fetch listings' },
+        { status: 500 }
+      );
     }
 
-    if (minCredits !== undefined || maxCredits !== undefined) {
-      where.creditCost = {
-        ...(minCredits !== undefined && { gte: minCredits }),
-        ...(maxCredits !== undefined && { lte: maxCredits }),
-      };
-    }
-
-    // Build orderBy
-    let orderBy: Prisma.SkillListingOrderByWithRelationInput = {
-      createdAt: "desc",
-    };
-
-    if (sort === "highest_rated") {
-      orderBy = {
-        user: { averageRating: "desc" },
-      };
-    } else if (sort === "lowest_cost") {
-      orderBy = {
-        creditCost: "asc",
-      };
-    }
-
-    // Cursor-based pagination (using createdAt as a date filter)
-    const listings = await db.skillListing.findMany({
-      where: {
-        ...where,
-        ...(cursor && { createdAt: { lt: new Date(cursor) } }),
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            avatar: true,
-            averageRating: true,
-          },
-        },
-      },
-      orderBy,
-      take: limit + 1,
-    });
-
-    const hasMore = listings.length > limit;
-    const listingsPage = hasMore ? listings.slice(0, limit) : listings;
-    const nextCursor = hasMore
-      ? listingsPage[listingsPage.length - 1].createdAt.toISOString()
-      : undefined;
-
-    const formattedListings = listingsPage.map((listing) => ({
-      id: listing.id,
-      title: listing.title,
-      category: listing.category,
-      tags: JSON.parse(listing.tags),
-      description: listing.description,
-      creditCost: listing.creditCost,
-      availability: listing.availability,
-      createdAt: listing.createdAt,
-      updatedAt: listing.updatedAt,
-      user: listing.user,
+    const listings = (data || []).map((l: any) => ({
+      ...l,
+      user: l.profiles
+        ? {
+            id: l.profiles.id,
+            name: l.profiles.full_name,
+            avatar: l.profiles.avatar_url,
+            averageRating: Number(l.profiles.average_rating) || 0,
+          }
+        : null,
     }));
 
-    return paginatedResponse(formattedListings, hasMore, nextCursor);
-  } catch (err) {
-    console.error("[GET /api/listings]", err);
-    return serverError();
+    return NextResponse.json({ success: true, data: listings });
+  } catch (error) {
+    console.error('Listings API error:', error);
+    return NextResponse.json(
+      { success: false, error: 'Internal server error' },
+      { status: 500 }
+    );
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const user = await requireAuth();
+    const supabase = await createServerClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: 'Authentication required' },
+        { status: 401 }
+      );
+    }
 
     const body = await request.json();
-    const parsed = createListingSchema.safeParse(body);
+    const supabase2 = await createServerClient();
 
-    if (!parsed.success) {
-      return error("VALIDATION_ERROR", parsed.error.issues[0].message);
+    const { data, error } = await supabase2
+      .from('listings')
+      .insert({
+        ...body,
+        user_id: user.id,
+        status: 'active',
+        is_active: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error creating listing:', error);
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: 500 }
+      );
     }
 
-    const { title, category, tags, description, creditCost, availability } =
-      parsed.data;
-
-    const listing = await db.skillListing.create({
-      data: {
-        userId: user.id,
-        title,
-        category,
-        tags: JSON.stringify(tags),
-        description,
-        creditCost,
-        availability,
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            avatar: true,
-            averageRating: true,
-          },
-        },
-      },
-    });
-
-    return success(
-      {
-        id: listing.id,
-        title: listing.title,
-        category: listing.category,
-        tags: JSON.parse(listing.tags),
-        description: listing.description,
-        creditCost: listing.creditCost,
-        availability: listing.availability,
-        isActive: listing.isActive,
-        createdAt: listing.createdAt,
-        updatedAt: listing.updatedAt,
-        user: listing.user,
-      },
-      201
+    return NextResponse.json({ success: true, data });
+  } catch (error) {
+    console.error('Create listing error:', error);
+    return NextResponse.json(
+      { success: false, error: 'Internal server error' },
+      { status: 500 }
     );
-  } catch (err) {
-    if (err instanceof AuthError) {
-      return unauthorized(err.message);
+  }
+}
+
+export async function PUT(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get('id');
+    if (!id) {
+      return NextResponse.json(
+        { success: false, error: 'Listing ID is required' },
+        { status: 400 }
+      );
     }
-    console.error("[POST /api/listings]", err);
-    return serverError();
+
+    const supabase = await createServerClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: 'Authentication required' },
+        { status: 401 }
+      );
+    }
+
+    const body = await request.json();
+    const supabase2 = await createServerClient();
+
+    const { data, error } = await supabase2
+      .from('listings')
+      .update({
+        ...body,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error updating listing:', error);
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({ success: true, data });
+  } catch (error) {
+    console.error('Update listing error:', error);
+    return NextResponse.json(
+      { success: false, error: 'Internal server error' },
+      { status: 500 }
+    );
   }
 }
